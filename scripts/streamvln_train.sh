@@ -8,49 +8,49 @@ export NCCL_DEBUG=INFO
 
 # Distributed training parameters
 NNODES=${NNODES:-1}                           # Number of nodes, default 1 (single node)
-NPROC_PER_NODE=${NPROC_PER_NODE:-8}          # GPUs per node, default 8
+NPROC_PER_NODE=${NPROC_PER_NODE:-4}          # GPUs per node, default 8
 MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}        # Master node address, default localhost for single node
 MASTER_PORT=${MASTER_PORT:-12000}  # Default port
 
 # Auto-select a large free port if unset or occupied
-if command -v python3 >/dev/null 2>&1; then
-SEL_PORT=$(python3 - <<'PY'
-import os, socket, random, sys
+# if command -v python3 >/dev/null 2>&1; then
+# SEL_PORT=$(python3 - <<'PY'
+# import os, socket, random, sys
 
-def is_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            s.bind(("", port))
-            return True
-        except OSError:
-            return False
+# def is_free(port: int) -> bool:
+#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+#         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#         try:
+#             s.bind(("", port))
+#             return True
+#         except OSError:
+#             return False
 
-env_port = os.environ.get("MASTER_PORT")
-if env_port is not None:
-    try:
-        p = int(env_port)
-        if 1024 <= p <= 65535 and is_free(p):
-            print(p)
-            sys.exit(0)
-    except Exception:
-        pass
+# env_port = os.environ.get("MASTER_PORT")
+# if env_port is not None:
+#     try:
+#         p = int(env_port)
+#         if 1024 <= p <= 65535 and is_free(p):
+#             print(p)
+#             sys.exit(0)
+#     except Exception:
+#         pass
 
-start = int(os.environ.get("PORT_START", 29500))
-end = int(os.environ.get("PORT_END", 65535))
-for _ in range(2048):
-    p = random.randint(start, end)
-    if is_free(p):
-        print(p)
-        sys.exit(0)
+# start = int(os.environ.get("PORT_START", 29500))
+# end = int(os.environ.get("PORT_END", 65535))
+# for _ in range(2048):
+#     p = random.randint(start, end)
+#     if is_free(p):
+#         print(p)
+#         sys.exit(0)
 
-print(0)
-PY
-)
-    if [ -n "$SEL_PORT" ] && [ "$SEL_PORT" != "0" ]; then
-        MASTER_PORT=$SEL_PORT
-    fi
-fi
+# print(0)
+# PY
+# )
+#     if [ -n "$SEL_PORT" ] && [ "$SEL_PORT" != "0" ]; then
+#         MASTER_PORT=$SEL_PORT
+#     fi
+# fi
 
 echo "=== Distributed training config ==="
 echo "Num nodes: $NNODES"
@@ -80,51 +80,52 @@ echo "PREV_STAGE_CHECKPOINT: ${PREV_STAGE_CHECKPOINT}"
 echo "MID_RUN_NAME: ${MID_RUN_NAME}"
 
 # Detect GPU count: prefer CUDA_VISIBLE_DEVICES, then nvidia-smi, then Python torch
-GPU_COUNT=""
-if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
-    _CVD_CLEAN=$(echo "$CUDA_VISIBLE_DEVICES" | tr -d '[:space:]' | sed 's/,,*/,/g;s/^,//;s/,$//')
-    if [ -n "$_CVD_CLEAN" ]; then
-        GPU_COUNT=$(echo "$_CVD_CLEAN" | awk -F, '{print NF}')
-    else
-        GPU_COUNT=0
-    fi
-elif command -v nvidia-smi >/dev/null 2>&1; then
-    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d '[:space:]')
-fi
+# GPU_COUNT=""
+# if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+#     _CVD_CLEAN=$(echo "$CUDA_VISIBLE_DEVICES" | tr -d '[:space:]' | sed 's/,,*/,/g;s/^,//;s/,$//')
+#     if [ -n "$_CVD_CLEAN" ]; then
+#         GPU_COUNT=$(echo "$_CVD_CLEAN" | awk -F, '{print NF}')
+#     else
+#         GPU_COUNT=0
+#     fi
+# elif command -v nvidia-smi >/dev/null 2>&1; then
+#     GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d '[:space:]')
+# fi
 
-if [ -z "$GPU_COUNT" ] || ! echo "$GPU_COUNT" | grep -Eq '^[0-9]+$'; then
-    if command -v python3 >/dev/null 2>&1; then
-        GPU_COUNT=$(python3 - <<'PY'
-try:
-    import torch
-    print(torch.cuda.device_count())
-except Exception:
-    print(-1)
-PY
-)
-        GPU_COUNT=$(echo "$GPU_COUNT" | tr -d '[:space:]')
-    fi
-fi
+# if [ -z "$GPU_COUNT" ] || ! echo "$GPU_COUNT" | grep -Eq '^[0-9]+$'; then
+#     if command -v python3 >/dev/null 2>&1; then
+#         GPU_COUNT=$(python3 - <<'PY'
+# try:
+#     import torch
+#     print(torch.cuda.device_count())
+# except Exception:
+#     print(-1)
+# PY
+# )
+#         GPU_COUNT=$(echo "$GPU_COUNT" | tr -d '[:space:]')
+#     fi
+# fi
 
-if ! echo "$GPU_COUNT" | grep -Eq '^[0-9]+$'; then
-    echo "Error: Unable to determine GPU count. Set CUDA_VISIBLE_DEVICES or install NVIDIA drivers."
-    exit 1
-fi
+# if ! echo "$GPU_COUNT" | grep -Eq '^[0-9]+$'; then
+#     echo "Error: Unable to determine GPU count. Set CUDA_VISIBLE_DEVICES or install NVIDIA drivers."
+#     exit 1
+# fi
 
-if [ "$GPU_COUNT" -le 0 ]; then
-    echo "Error: No GPUs visible to the process."
-    exit 1
-fi
+# if [ "$GPU_COUNT" -le 0 ]; then
+#     echo "Error: No GPUs visible to the process."
+#     exit 1
+# fi
 
-echo "Detected GPUs: $GPU_COUNT"
-if [ "$GPU_COUNT" -lt "$NPROC_PER_NODE" ]; then
-    echo "Warning: NPROC_PER_NODE ($NPROC_PER_NODE) > available GPUs ($GPU_COUNT)"
-    echo "Auto-adjust NPROC_PER_NODE to available GPUs"
-    NPROC_PER_NODE=$GPU_COUNT
-fi
-echo "========================"
+# echo "Detected GPUs: $GPU_COUNT"
+# if [ "$GPU_COUNT" -lt "$NPROC_PER_NODE" ]; then
+#     echo "Warning: NPROC_PER_NODE ($NPROC_PER_NODE) > available GPUs ($GPU_COUNT)"
+#     echo "Auto-adjust NPROC_PER_NODE to available GPUs"
+#     NPROC_PER_NODE=$GPU_COUNT
+# fi
+# echo "========================"
 
-torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
+#torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
+torchrun --nnodes=$NNODES --nproc_per_node=4 \
     --rdzv_id=12345 --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT streamvln/streamvln_train.py \
     --deepspeed scripts/zero2.json \
     --model_name_or_path $PREV_STAGE_CHECKPOINT \
