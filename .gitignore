@@ -1,0 +1,7 @@
+/checkpoints/
+/data
+/habitat-lab
+__pycache__/
+/results/
+/wandb/
+

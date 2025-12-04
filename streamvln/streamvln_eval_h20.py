@@ -325,9 +325,10 @@ class VLNEvaluator:
                             
                         input_dict = dict_to_cuda(input_dict, self.device)
                         
-                        for key, value in input_dict.items():
-                            if key in ['images', 'depths', 'poses', 'intrinsics']:
-                                input_dict[key] = input_dict[key].to(torch.bfloat16)
+                        # for key, value in input_dict.items():
+                        #     if key in ['images', 'depths', 'poses', 'intrinsics']:
+                        #         #input_dict[key] = input_dict[key].to(torch.bfloat16)
+                        #         input_dict[key] = input_dict[key].to(torch.float16)
                         
                         outputs = self.model.generate(**input_dict, do_sample=False, num_beams=1, max_new_tokens=10000, use_cache=True, return_dict_in_generate=True, past_key_values=past_key_values)
                         
@@ -509,8 +510,8 @@ def eval():
                         help='gpu')
     parser.add_argument('--port', default='1111')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-    parser.add_argument('--vision_tower_path', type=str, default=None,
-            help='Path to vision tower model (e.g., checkpoints/google/siglip-so400m-patch14-384)')
+    # parser.add_argument('--vision_tower_path', type=str, default=None,
+    #         help='Path to vision tower model (e.g., checkpoints/google/siglip-so400m-patch14-384)')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     
@@ -525,8 +526,10 @@ def eval():
     config = transformers.AutoConfig.from_pretrained(args.model_path)
     model = StreamVLNForCausalLM.from_pretrained(
                 args.model_path,
-                attn_implementation="flash_attention_2",
-                torch_dtype=torch.bfloat16,
+                #attn_implementation="flash_attention_2",
+                attn_implementation="sdpa",
+                #torch_dtype=torch.bfloat16,
+                # torch_dtype=torch.float16,
                 config=config,
                 low_cpu_mem_usage=False,
                 )
