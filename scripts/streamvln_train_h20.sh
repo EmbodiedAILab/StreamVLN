@@ -7,6 +7,22 @@ export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=1
 export NCCL_DEBUG=INFO
 
+
+# Create log directory if it doesn't exist
+LOG_DIR="logs/$(date +%Y%m%d)"
+mkdir -p "$LOG_DIR"
+
+# Generate timestamp for log files
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+LOG_FILE_OUT="${LOG_DIR}/streamvln_train_${TIMESTAMP}_out.log"
+LOG_FILE_ERR="${LOG_DIR}/streamvln_train_${TIMESTAMP}_err.log"
+
+echo "=========================================="
+echo "Training started at: $(date)"
+echo "Standard output log: $LOG_FILE_OUT"
+echo "Standard error log: $LOG_FILE_ERR"
+echo "=========================================="
+
 # Distributed training parameters
 NNODES=${NNODES:-1}                           # Number of nodes, default 1 (single node)
 NPROC_PER_NODE=${NPROC_PER_NODE:-8}          # GPUs per node, default 8
@@ -178,4 +194,4 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --torch_compile False \
     --torch_compile_backend "inductor" \
     --dataloader_drop_last True \
-    --report_to tensorboard ; /usr/bin/shutdown
+    --report_to tensorboard > >(tee "$LOG_FILE_OUT") 2> >(tee "$LOG_FILE_ERR" >&2)  # ; /usr/bin/shutdown
