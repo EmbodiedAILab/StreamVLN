@@ -6,7 +6,7 @@ echo "CHECKPOINT: ${CHECKPOINT}"
 
 CONFIG_PATH="config/objnav_hm3d.yaml"
 
-torchrun --nproc_per_node=2 \
+time torchrun --nproc_per_node=2 \
         --standalone streamvln/objnav_eval.py \
         --model_path $CHECKPOINT \
         --habitat_config_path $CONFIG_PATH \

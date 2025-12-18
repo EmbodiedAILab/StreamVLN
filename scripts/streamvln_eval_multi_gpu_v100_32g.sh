@@ -3,17 +3,17 @@ export HF_HUB_OFFLINE=1
 export VISION_MODEL_VERSION="checkpoints/google/siglip-so400m-patch14-384"
 MASTER_PORT=$((RANDOM % 101 + 20000))
 
-#CHECKPOINT="./checkpoints/mengwei0427/StreamVLN_Video_qwen_1_5_r2r_rxr_envdrop_scalevln"
-CHECKPOINT="checkpoints/StreamVLN_Video_qwen_1_5_1epoch_196token_8history_32frame"
+CHECKPOINT="./checkpoints/mengwei0427/StreamVLN_Video_qwen_1_5_r2r_rxr_envdrop_scalevln"
+#CHECKPOINT="checkpoints/StreamVLN_Video_qwen_1_5_1epoch_196token_8history_32frame"
 echo "CHECKPOINT: ${CHECKPOINT}"
 
-torchrun --nproc_per_node=2 \
+time torchrun --nproc_per_node=2 \
     --master_port=$MASTER_PORT \
-    streamvln/streamvln_eval_v100_32.py \
+    streamvln/streamvln_eval_v100_32g.py \
     --model_path $CHECKPOINT \
     --habitat_config_path "config/vln_r2r.yaml" \
     --eval_split "val_seen" \
-    --output_path "results/vals/seen/streamvln_1204"
+    --output_path "results/vals/seen/paper"
     #--eval_split "val_unseen" \
     #--output_path "results/vals/_unseen/streamvln_3"
 
