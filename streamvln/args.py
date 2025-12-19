@@ -86,6 +86,7 @@ class DataArguments:
     scanqa_video_folder: Optional[str] = field(default=None)
     multi_task_training: bool = field(default=False)
     objnav_video_folder: Optional[str] = field(default=None)
+    dataset_source: Optional[str] = field(default=None)
 
     num_future_steps: Optional[int] = field(default=1)
     num_frames: Optional[int] = field(default=32)

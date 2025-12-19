@@ -6,6 +6,8 @@ import random
 import tokenizers
 import numpy as np
 import transformers
+import glob
+import gzip
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 
@@ -604,6 +606,10 @@ def preprocess(sources: Sequence[str], tokenizer: transformers.PreTrainedTokeniz
         conversation = _add_speaker_and_signal(header, source)
         conversations.append(conversation)
 
+
+
+
+
 class VLNActionDataset(Dataset):
     def __init__(
         self, 
@@ -626,12 +632,7 @@ class VLNActionDataset(Dataset):
 
         self.video_folder = data_args.video_folder.split(',')
 
-        self.nav_data =[]
-        for vf in self.video_folder:
-            anno_json = json.load(open(os.path.join(vf, 'annotations.json'), 'r'))
-            for tdata in anno_json:
-                tdata['video'] = os.path.join(vf, tdata['video'])
-            self.nav_data += anno_json
+        self.nav_data = self.load_vln_data()
         
         self.data_list = []
         for ep_id, item in enumerate(self.nav_data):
@@ -699,6 +700,45 @@ class VLNActionDataset(Dataset):
     def task(self):
         return self.task_id
     
+    def load_vln_data(self):
+        """Load VLN navigation data from different sources."""
+        nav_data = []
+
+        # Check if dataset_source is specified and equals 'cloudrobo'
+        dataset_source = getattr(self.data_args, 'dataset_source', None)
+
+        if dataset_source == 'cloudrobo':
+            # Load from cloudrobo format: episode_num_* directories with annotations/*.json.gz files
+            for vf in self.video_folder:
+                # Find all episode_num_* directories
+                episode_dirs = glob.glob(os.path.join(vf, 'episode_num_*'))
+                episode_dirs.sort()  # Sort for consistent ordering
+
+                for episode_dir in episode_dirs:
+                    annotations_dir = os.path.join(episode_dir, 'annotations')
+                    if os.path.exists(annotations_dir):
+                        # Find all .json.gz files in annotations directory
+                        json_files = glob.glob(os.path.join(annotations_dir, '*.json.gz'))
+                        json_files.sort()  # Sort for consistent ordering
+
+                        for json_file in json_files:
+                            # Read and decompress the JSON file
+                            with gzip.open(json_file, 'rt') as f:
+                                tdata = json.load(f)
+                                tdata['video'] = os.path.join(episode_dir, tdata['video'])
+                            nav_data.append(tdata)
+        else:
+            # Original logic: load annotations.json from each video folder
+            for vf in self.video_folder:
+                anno_json = json.load(open(os.path.join(vf, 'annotations.json'), 'r'))
+                for tdata in anno_json:
+                    tdata['video'] = os.path.join(vf, tdata['video'])
+                nav_data += anno_json
+        
+        print(f"Successfully loaded {len(nav_data)} vln episodes in total from {self.video_folder}")
+
+        return nav_data
+
     def actions2text(self, actions):
         converted_sequence = []         
         for action in actions:
