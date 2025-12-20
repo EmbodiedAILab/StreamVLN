@@ -6,6 +6,7 @@ export NCCL_NVLS_ENABLE=0
 export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=1
 export NCCL_DEBUG=INFO
+export NCCL_NVLS_ENABLE=0
 
 
 # Create log directory if it doesn't exist

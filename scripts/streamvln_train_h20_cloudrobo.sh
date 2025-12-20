@@ -6,9 +6,10 @@ export NCCL_NVLS_ENABLE=0
 export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=1
 export NCCL_DEBUG=INFO
+export NCCL_NVLS_ENABLE=0
 
 
-# Create log directory if it doesn't exist
+#Create log directory if it doesn't exist
 LOG_DIR="logs/$(date +%Y%m%d)"
 mkdir -p "$LOG_DIR"
 
@@ -84,7 +85,7 @@ echo "HF cache dir: $HF_HOME"
 # VIDEO_FOLDER="data/trajectory_data/RxR"
 # VIDEO_FOLDER="data/trajectory_data/hm3d_v1_hd_l3mvn"
 # VIDEO_FOLDER="data/trajectory_data/R2R_small_1118"
-VIDEO_FOLDER="data/trajectory_data/cloudrobo/hm3d_v2_l3mvn_refine_v2_1"
+VIDEO_FOLDER="data/trajectory_data/cloudrobo/hm3d_v2_l3mvn_refine_v2_1_01"
 
 LLM_VERSION="Qwen/Qwen2-7B-Instruct"
 # POSIX-compatible replacement: replace '/' with '_' using tr
@@ -179,7 +180,7 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --gradient_accumulation_steps 2 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 10 \
+    --save_steps 2000 \
     --save_total_limit 7 \
     --learning_rate 2e-5 \
     --mm_vision_tower_lr 5e-6 \
