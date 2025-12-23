@@ -174,7 +174,7 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --fp16 True \
     --run_name $MID_RUN_NAME \
     --output_dir checkpoints/$MID_RUN_NAME \
-    --num_train_epochs 2 \
+    --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 2 \
@@ -182,12 +182,13 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --save_strategy "steps" \
     --save_steps 2000 \
     --save_total_limit 7 \
-    --learning_rate 2e-5 \
-    --mm_vision_tower_lr 5e-6 \
+    --learning_rate 1e-5 \
+    --mm_vision_tower_lr 2.5e-6 \
+    --max_grad_norm 1.0 \
     --weight_decay 0. \
     --warmup_ratio 0.075 \
     --lr_scheduler_type "cosine_with_min_lr" \
-    --lr_scheduler_kwargs '{"min_lr": 1.85e-05}' \
+    --lr_scheduler_kwargs '{"min_lr": 9e-6}' \
     --logging_steps 10 \
     --tf32 True \
     --model_max_length 32768 \
@@ -197,4 +198,4 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --torch_compile False \
     --torch_compile_backend "inductor" \
     --dataloader_drop_last True \
-    --report_to tensorboard > >(tee "$LOG_FILE_OUT") 2> >(tee "$LOG_FILE_ERR" >&2)  # ; /usr/bin/shutdown
+    --report_to tensorboard > >(tee "$LOG_FILE_OUT") 2> >(tee "$LOG_FILE_ERR" >&2)  ; /usr/bin/shutdown
