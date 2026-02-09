@@ -177,7 +177,7 @@
         "name": "Python: Verify LeRobot Dataset",
         "type": "python",
         "request": "launch",
-        "program": "${workspaceFolder}/scripts/verify_lerobot_dataset.py",
+        "program": "${workspaceFolder}/scripts/dataset_converters/load_lerobot_datasets.py",
         "args": [
             "--repo_id", "streamvln/r2r_navigation",
             "--root", "./data/lerobot",
@@ -194,6 +194,19 @@
         "type": "python",
         "request": "launch",
         "program": "${workspaceFolder}/scripts/verify_r2r_lerobot_with_images.py",
+        "args": [
+        ],
+        "console": "integratedTerminal",
+        "justMyCode": false,
+        "env": {
+            "PYTHONPATH": "${workspaceFolder}"
+        }
+    },
+    {
+        "name": "Python: Verify LeRobot Dataset in streamvln",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/tests/test_lerobot_dataset.py",
         "args": [
         ],
         "console": "integratedTerminal",

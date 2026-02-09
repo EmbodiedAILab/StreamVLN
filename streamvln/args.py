@@ -129,4 +129,24 @@ class TrainingArguments(transformers.TrainingArguments):
     verbose_logging: bool = field(default=False)
     #attn_implementation: str = field(default="flash_attention_2", metadata={"help": "Use transformers attention implementation."})
     attn_implementation: str = field(default="sdpa", metadata={"help": "Use transformers attention implementation."})
-    
+
+
+@dataclass
+class LeRobotDataArguments:
+    """LeRobot dataset specific arguments"""
+    use_lerobot: bool = field(
+        default=False,
+        metadata={"help": "Whether to use LeRobot dataset instead of VLN dataset"}
+    )
+    lerobot_data_path: str = field(
+        default="./data/lerobot",
+        metadata={"help": "Path to LeRobot dataset root (parent of repo_id)"}
+    )
+    lerobot_repo_id: str = field(
+        default="streamvln/r2r_navigation",
+        metadata={"help": "LeRobot repository ID (e.g., 'streamvln/r2r_navigation')"}
+    )
+    video_backend: str = field(
+        default="auto",
+        metadata={"help": "Video decoding backend: 'auto', 'av', or 'opencv'"}
+    )

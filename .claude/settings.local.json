@@ -18,7 +18,9 @@
       "Bash(done)",
       "Bash(wc:*)",
       "Bash(python:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(source:*)",
+      "Bash(conda activate:*)"
     ],
     "deny": [],
     "ask": []

@@ -58,8 +58,170 @@ from streamvln.dataset.mmc4_dataset import LazyMMC4Dataset
 
 from streamvln.dataset.objectnav_action_dataset import ObjNavActionDataset
 
-
 from streamvln.utils.utils import ANSWER_LIST, DEFAULT_IMAGE_TOKEN, IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_MEMORY_TOKEN, MEMORY_TOKEN_INDEX, DEFAULT_VIDEO_TOKEN
+
+
+class LeRobotActionDatasetAdapter(Dataset):
+    """
+    Adapter class to convert LeRobot dataset format to StreamVLN training format.
+
+    This wrapper converts the LeRobotActionDataset output (observation.images.rgb, action, task)
+    to the format expected by the training pipeline (input_ids, labels, images, time_ids, task).
+    """
+
+    def __init__(self, lerobot_dataset, tokenizer, num_frames=32, num_future_steps=1, num_history=None):
+        self.lerobot_dataset = lerobot_dataset
+        self.tokenizer = tokenizer
+        self.num_frames = num_frames
+        self.num_future_steps = num_future_steps
+        self.num_history = num_history
+
+        # Action index to text mapping
+        self.idx2actions = {
+            '0': 'STOP',
+            '1': "↑",
+            '2': "←",
+            '3': "→",
+        }
+
+        # Build data list (similar to VLNActionDataset)
+        self.data_list = self._build_data_list()
+
+        # Conversation template
+        prompt = f"You are an autonomous navigation assistant. Your task is to <instruction>. Devise an action sequence to follow the instruction using the four actions: TURN LEFT (←) or TURN RIGHT (→) by 15 degrees, MOVE FORWARD (↑) by 25 centimeters, or STOP."
+        answer = ""
+        self.conversations = [{"from": "human", "value": prompt}, {"from": "gpt", "value": answer}]
+
+        # Conjunctions for variety
+        self.conjunctions = [
+            'you can see ',
+            'in front of you is ',
+            'there is ',
+            'you can spot ',
+            'you are toward the ',
+            'ahead of you is ',
+            'in your sight is '
+        ]
+        self.act_conjunctions = [
+            'and then ',
+            'after that ',
+            'next ',
+            'the next action is ',
+            'followed by ',
+            'leading to ',
+            'continuing ',
+            'subsequently ',
+            'proceeding to '
+        ]
+
+    def _build_data_list(self):
+        """Build list of sample indices from LeRobot dataset episodes."""
+        data_list = []
+        # Group frames by episode
+        for episode_idx in range(self.lerobot_dataset.total_episodes):
+            episode_data = self.lerobot_dataset.episodes_df[
+                self.lerobot_dataset.episodes_df['episode_index'] == episode_idx
+            ]
+            if not episode_data.empty:
+                episode_length = int(episode_data.iloc[0]['length'])
+                if episode_length >= self.num_frames:
+                    num_rounds = episode_length // self.num_frames
+                    for n in range(num_rounds + 1):
+                        start_frame = n * self.num_frames
+                        if start_frame + self.num_frames <= episode_length:
+                            data_list.append((episode_idx, start_frame))
+        return data_list
+
+    def __len__(self):
+        return len(self.data_list)
+
+    @property
+    def task(self):
+        return 0  # VLN task ID
+
+    def actions2text(self, actions):
+        """Convert action indices to text."""
+        converted_sequence = []
+        for action in actions:
+            act_text = self.idx2actions.get(str(action.item()), 'STOP')
+            converted_sequence.append(act_text)
+        return ''.join(converted_sequence)
+
+    def prepare_conversation(self, actions):
+        """Prepare conversation with interleaved image tokens and action predictions."""
+        sources = []
+        i = 0
+        while i < len(actions):
+            source = copy.deepcopy(self.conversations)
+            prompt = random.choice(self.conjunctions) + DEFAULT_IMAGE_TOKEN
+            step_actions = actions[i:i + self.num_future_steps]
+            answer = self.actions2text(step_actions)
+            if i == 0:
+                source[0]["value"] += f" {prompt}."
+            else:
+                source[0]["value"] = f"{prompt}."
+            source[1]["value"] = answer
+            i += len(step_actions)
+            sources.extend(source)
+        return sources
+
+    def __getitem__(self, idx):
+        from llava.dataset import preprocess
+        episode_idx, start_frame = self.data_list[idx]
+
+        # Load frames from LeRobot dataset
+        images = []
+        actions = []
+        time_ids = []
+
+        for frame_offset in range(self.num_frames):
+            global_frame_idx = self._get_global_frame_index(episode_idx, start_frame + frame_offset)
+            if global_frame_idx is None:
+                break
+
+            sample = self.lerobot_dataset[global_frame_idx]
+            images.append(sample['observation.images.rgb'])
+            actions.append(sample['action'])
+            time_ids.append(frame_offset)
+
+        if not images:
+            raise RuntimeError(f"Failed to load any frames for episode {episode_idx}, start {start_frame}")
+
+        images = torch.stack(images)
+        actions = torch.stack(actions)
+        time_ids = torch.tensor(time_ids, dtype=torch.long)
+
+        # Get instruction from task
+        task_json = self.lerobot_dataset._get_task_description(0)  # Assume first task
+        try:
+            task_data = json.loads(task_json)
+            instruction = task_data.get('instruction', 'Navigate to the goal.')
+        except json.JSONDecodeError:
+            instruction = 'Navigate to the goal.'
+
+        # Prepare conversation
+        sources = copy.deepcopy(self.conversations)
+        sources[0]["value"] = sources[0]["value"].replace('<instruction>.', instruction)
+        interleave_sources = self.prepare_conversation(actions)
+
+        # Preprocess to get input_ids and labels
+        data_dict = preprocess([interleave_sources], self.tokenizer, True)
+
+        return data_dict["input_ids"][0], \
+            data_dict["labels"][0], \
+            images, \
+            time_ids, \
+            self.task
+
+    def _get_global_frame_index(self, episode_idx, frame_in_episode):
+        """Get global frame index from episode index and frame in episode."""
+        episode_data = self.lerobot_dataset.episodes_df[
+            self.lerobot_dataset.episodes_df['episode_index'] == episode_idx
+        ]
+        if episode_data.empty:
+            return None
+        episode_start = int(episode_data.iloc[0]['dataset_from_index'])
+        return episode_start + frame_in_episode
 torch.multiprocessing.set_sharing_strategy("file_system")
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -67,7 +229,7 @@ local_rank = None
 
 IS_TOKENIZER_GREATER_THAN_0_14 = version.parse(tokenizers.__version__) >= version.parse("0.14")
 
-from streamvln.args import ModelArguments, DataArguments, TrainingArguments
+from streamvln.args import ModelArguments, DataArguments, TrainingArguments, LeRobotDataArguments
 
 try:
     from petrel_client.client import Client
@@ -1437,13 +1599,38 @@ class DataCollatorForSupervisedDataset(object):
         
 
 
-def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,vision_tower, data_args) -> Dict:
+def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,vision_tower, data_args, lerobot_args=None) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
-    
+
     dataset = []
 
+    # Support for LeRobot dataset (optional, takes priority if enabled)
+    if lerobot_args is not None and getattr(lerobot_args, 'use_lerobot', False):
+        from streamvln.dataset.lerobot_action_dataset import LeRobotActionDataset
+
+        lerobot_dataset = LeRobotActionDataset(
+            repo_id=lerobot_args.lerobot_repo_id,
+            root=lerobot_args.lerobot_data_path,
+            video_backend=getattr(lerobot_args, 'video_backend', 'auto'),
+        )
+        rank0_print(f"Loaded LeRobot dataset: {lerobot_dataset.repo_id}")
+        rank0_print(f"  Total episodes: {lerobot_dataset.total_episodes}")
+        rank0_print(f"  Total frames: {lerobot_dataset.total_frames}")
+        rank0_print(f"  FPS: {lerobot_dataset.fps}")
+        rank0_print(f"  Video backend: {lerobot_dataset.video_backend}")
+
+        # Wrap LeRobot dataset with adapter
+        nav_dataset = LeRobotActionDatasetAdapter(
+            lerobot_dataset=lerobot_dataset,
+            tokenizer=tokenizer,
+            num_frames=data_args.num_frames,
+            num_future_steps=data_args.num_future_steps,
+            num_history=data_args.num_history,
+        )
+        dataset.append(nav_dataset)
+        rank0_print(f"Wrapped LeRobot dataset with adapter for training")
     # Support for VLN dataset (optional)
-    if data_args.video_folder is not None:
+    elif data_args.video_folder is not None:
         nav_dataset = VLNActionDataset(tokenizer=tokenizer, data_args=data_args, task_id=0)
         dataset.append(nav_dataset)
         rank0_print(f"Loaded VLN dataset from {data_args.video_folder}")
@@ -1459,24 +1646,24 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,visi
         rank0_print(f"Loaded ObjectNav dataset from {data_args.objnav_video_folder}")
     else:
         rank0_print("ObjectNav dataset not loaded (objnav_video_folder is None)")
-    
+
     if data_args.multi_task_training:
         QA_data_agrs = copy.deepcopy(data_args)
         QA_data_agrs.video_folder = data_args.qa_video_folder
         QA_dataset = LazySupervisedDataset(tokenizer=tokenizer, data_path=QA_data_agrs.data_path, datasets="QA_datasets", data_args=QA_data_agrs, task_id=1)
-        
+
         SCANQA_data_agrs = copy.deepcopy(data_args)
         SCANQA_data_agrs.video_folder = data_args.scanqa_video_folder
         SCANQA_dataset = LazySupervisedDataset(tokenizer=tokenizer, data_path=SCANQA_data_agrs.data_path, datasets="SCANQA_datasets", data_args=SCANQA_data_agrs, task_id=2)
-        
+
         MMC4_dataset = LazyMMC4Dataset(tokenizer=tokenizer, data_path=data_args.data_path, datasets="MMC4_datasets", data_args=data_args, task_id=3)
-        
+
         dataset = dataset + [QA_dataset] + [SCANQA_dataset] + [MMC4_dataset]
     if len(dataset) > 1:
         train_dataset = CombineDataset(dataset)
     else:
         train_dataset = dataset[0]
-        
+
     rank0_print('len train_dataset ', len(train_dataset))
 
     data_collator = partial(collate_fn, tokenizer=tokenizer)
@@ -1570,8 +1757,8 @@ def train(attn_implementation=None):
     global local_rank
     # torch.autograd.set_detect_anomaly(True)
     
-    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, LeRobotDataArguments))
+    model_args, data_args, training_args, lerobot_args = parser.parse_args_into_dataclasses()
 
     if training_args.verbose_logging:
         rank0_print(f"Inspecting experiment hyperparameters:\n")
@@ -1834,7 +2021,7 @@ def train(attn_implementation=None):
         data_args.transform_train = None
 
     # import ipdb; ipdb.set_trace()
-    data_module = make_supervised_data_module(tokenizer=tokenizer,vision_tower=vision_tower, data_args=data_args)
+    data_module = make_supervised_data_module(tokenizer=tokenizer, vision_tower=vision_tower, data_args=data_args, lerobot_args=lerobot_args)
     
     params_no_grad = [
         n for n, p in model.named_parameters() if not p.requires_grad
