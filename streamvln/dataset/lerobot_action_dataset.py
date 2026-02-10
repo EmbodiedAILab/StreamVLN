@@ -678,12 +678,8 @@ class LeRobotActionDataset(Dataset):
         # Load tasks metadata
         self.tasks_df = self._load_tasks()
 
-        # Initialize video backend
-        self.video_backend = self._init_video_backend(self.video_backend)
-
         # Find all data chunks
         self.data_chunks = self._find_data_chunks()
-        self.video_chunks = self._find_video_chunks()
 
     def _load_all_episodes(self) -> pd.DataFrame:
         """Load episode metadata from all chunks."""
@@ -763,49 +759,12 @@ class LeRobotActionDataset(Dataset):
             warnings.warn(f"Failed to load tasks from {tasks_file}: {e}")
             return pd.DataFrame()
 
-    def _init_video_backend(self, backend: str) -> str:
-        """Initialize video decoding backend with fallback."""
-        if backend == "auto":
-            # Prefer OpenCV for more reliable frame seeking
-            try:
-                import cv2
-                return "opencv"
-            except ImportError:
-                try:
-                    import av
-                    return "av"
-                except ImportError:
-                    raise RuntimeError("Neither OpenCV nor PyAV is available for video decoding")
-        elif backend == "av":
-            try:
-                import av
-                return "av"
-            except ImportError:
-                warnings.warn("PyAV not available, falling back to OpenCV")
-                return "opencv"
-        elif backend == "opencv":
-            try:
-                import cv2
-                return "opencv"
-            except ImportError:
-                raise RuntimeError("OpenCV not available for video decoding")
-        else:
-            return "opencv"
-
     def _find_data_chunks(self) -> List[Path]:
         """Find all data chunk directories."""
         data_dir = self.root / "data"
         if not data_dir.exists():
             return []
         chunks = sorted(data_dir.glob("chunk-*"), key=lambda x: int(x.name.split("-")[1]))
-        return chunks
-
-    def _find_video_chunks(self) -> List[Path]:
-        """Find all video chunk directories."""
-        video_dir = self.root / "videos" / self.video_key
-        if not video_dir.exists():
-            return []
-        chunks = sorted(video_dir.glob("chunk-*"), key=lambda x: int(x.name.split("-")[1]))
         return chunks
 
     def _build_data_list(self):
@@ -957,54 +916,11 @@ class LeRobotActionDataset(Dataset):
         except Exception as e:
             raise RuntimeError(f"Failed to load frame data from {file_path}: {e}")
 
-    def _get_video_path(self, chunk_idx: int, file_idx: int) -> Path:
-        """Get video file path for a given chunk and file index."""
-        if chunk_idx >= len(self.video_chunks):
-            chunk_idx = 0
-        video_chunk_dir = self.video_chunks[chunk_idx]
-        video_path = video_chunk_dir / f"file-{file_idx:03d}.mp4"
-        if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
-        return video_path
-
-    def _decode_video_frame(self, video_path: Path, frame_idx: int) -> np.ndarray:
-        """Decode frame using PyAV (preferred) or OpenCV (fallback)."""
-        if self.video_backend == "av":
-            return self._decode_video_frame_av(video_path, frame_idx)
-        else:
-            return self._decode_video_frame_opencv(video_path, frame_idx)
-
-    def _decode_video_frame_av(self, video_path: Path, frame_idx: int) -> np.ndarray:
-        """Decode frame using PyAV."""
-        import av
-        with av.open(str(video_path)) as container:
-            stream = container.streams.video[0]
-            try:
-                timestamp = int(frame_idx / self.fps / stream.time_base)
-                container.seek(timestamp, stream=stream)
-            except Exception:
-                container.seek(0, stream=stream)
-
-            current_frame = 0
-            for packet in container.demux(stream):
-                for frame in packet.decode():
-                    if current_frame == frame_idx:
-                        img = frame.to_ndarray(format='rgb24')
-                        return img
-                    current_frame += 1
-        raise RuntimeError(f"Frame {frame_idx} not found in {video_path}")
-
-    def _decode_video_frame_opencv(self, video_path: Path, frame_idx: int) -> np.ndarray:
-        """Decode frame using OpenCV."""
-        import cv2
-        cap = cv2.VideoCapture(str(video_path))
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
-        cap.release()
-        if not ret:
-            raise RuntimeError(f"Failed to decode frame {frame_idx} from {video_path}")
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        return frame
+    def _load_image_from_bytes(self, image_bytes: bytes) -> np.ndarray:
+        """Load image from PNG bytes stored in parquet file."""
+        from io import BytesIO
+        img = Image.open(BytesIO(image_bytes))
+        return np.array(img)
 
     def __getitem__(self, idx):
         """Get a training sample (same return format as VLNActionDataset)."""
@@ -1041,9 +957,14 @@ class LeRobotActionDataset(Dataset):
             global_frame_idx = episode_start + step_id
             chunk_idx, file_idx, file_start_idx = self._locate_frame(global_frame_idx, episode_idx)
             frame_data = self._load_frame_data(chunk_idx, file_idx, global_frame_idx)
-            video_path = self._get_video_path(chunk_idx, file_idx)
-            frame_idx_in_video = global_frame_idx - file_start_idx
-            frame = self._decode_video_frame(video_path, frame_idx_in_video)
+
+            # Load image from PNG bytes stored in parquet
+            img_data = frame_data.get('observation.images.rgb', {})
+            if isinstance(img_data, dict) and 'bytes' in img_data:
+                image_bytes = img_data['bytes']
+                frame = self._load_image_from_bytes(image_bytes)
+            else:
+                raise RuntimeError(f"Image data not found in frame {global_frame_idx}")
 
             # Process frame
             frame_tensor = self._process_frame(frame)
@@ -1057,9 +978,14 @@ class LeRobotActionDataset(Dataset):
             global_frame_idx = episode_start + step_id
             chunk_idx, file_idx, file_start_idx = self._locate_frame(global_frame_idx, episode_idx)
             frame_data = self._load_frame_data(chunk_idx, file_idx, global_frame_idx)
-            video_path = self._get_video_path(chunk_idx, file_idx)
-            frame_idx_in_video = global_frame_idx - file_start_idx
-            frame = self._decode_video_frame(video_path, frame_idx_in_video)
+
+            # Load image from PNG bytes stored in parquet
+            img_data = frame_data.get('observation.images.rgb', {})
+            if isinstance(img_data, dict) and 'bytes' in img_data:
+                image_bytes = img_data['bytes']
+                frame = self._load_image_from_bytes(image_bytes)
+            else:
+                raise RuntimeError(f"Image data not found in frame {global_frame_idx}")
 
             # Process frame
             frame_tensor = self._process_frame(frame)

@@ -29,7 +29,8 @@ from tqdm import tqdm
 # but is NOT defined in features as it's handled separately by LeRobot
 R2R_FEATURES = {
     "observation.images.rgb": {
-        "dtype": "video",
+        #"dtype": "video",
+        "dtype": "image",
         "shape": None,  # Will be inferred from first image: [height, width, channel]
         "names": ["height", "width", "channel"]
     },

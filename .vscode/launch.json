@@ -193,7 +193,7 @@
         "name": "Python: Verify LeRobot Dataset with image",
         "type": "python",
         "request": "launch",
-        "program": "${workspaceFolder}/scripts/verify_r2r_lerobot_with_images.py",
+        "program": "${workspaceFolder}/scripts/dataset_converters/verify_r2r_lerobot_with_images.py",
         "args": [
         ],
         "console": "integratedTerminal",
