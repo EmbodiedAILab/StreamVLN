@@ -309,7 +309,7 @@
         // 把 torchrun 的参数 + 你原本脚本参数都放到 args
         "args": [
             "--nnodes=1",
-            "--nproc_per_node=2",
+            "--nproc_per_node=4",
             "--standalone",
             "${workspaceFolder}/streamvln/streamvln_train.py",
             "--deepspeed", "${workspaceFolder}/scripts/zero2_v100_32g.json",
@@ -344,8 +344,7 @@
             "--per_device_train_batch_size", "1",
             "--per_device_eval_batch_size", "4",
             "--gradient_accumulation_steps", "2",
-            "--evaluation_strategy", "no",
-            "--save_strategy", "no",
+            "--eval_strategy", "no",
             "--save_strategy", "epoch",
             "--save_total_limit", "1",
             "--learning_rate", "1e-5",
@@ -359,7 +358,7 @@
             "--tf32", "False",
             "--model_max_length", "32768",
             "--gradient_checkpointing", "True",
-            "--dataloader_num_workers", "4",
+            "--dataloader_num_workers", "8",
             "--lazy_preprocess", "True",
             "--torch_compile", "False",
             "--torch_compile_backend", "inductor",

@@ -667,6 +667,7 @@ class LeRobotActionDataset(Dataset):
 
         # Load episodes metadata
         self.episodes_df = self._load_all_episodes()
+        print(f"Lerobot episode size: {len(self.episodes_df)}")
 
         # Build cumulative frame count mapping
         if not self.episodes_df.empty:

@@ -1009,9 +1009,564 @@ valid_idx = 0  # LeRobot datasets don't have initial rotations to skip
 
 ---
 
-## 10. 总结
+## 10. 内存加载分析
 
-`LeRobotActionDataset` 是一个高效的自定义 Dataset 类，具有以下特点：
+### 10.1 核心问题：会一开始就加载全部图片吗？
+
+**❌ 不会！** `LeRobotActionDataset` 采用了**懒加载（Lazy Loading）**策略，不会在初始化时加载全部图片到内存中。
+
+### 10.2 初始化阶段的内存加载
+
+#### __init__ 方法分析
+
+```python
+# 行 593-645: __init__
+def __init__(self, tokenizer, data_args, task_id):
+    # 基础配置（只有数值和对象引用）
+    self.task_id = task_id
+    self.image_size = data_args.image_size
+    self.num_frames = data_args.num_frames
+    self.image_processor = SigLipImageProcessor()
+
+    # 1. 加载元数据（不含图片）
+    self._load_lerobot_metadata()  # ← 只加载 JSON 和 Parquet schema
+
+    # 2. 构建索引列表（不含图片）
+    self.data_list = self._build_data_list()  # ← 只构建 (episode_idx, start_idx, valid_idx) 元组
+```
+
+#### _load_lerobot_metadata 方法分析
+
+```python
+# 行 647-682: _load_lerobot_metadata
+def _load_lerobot_metadata(self):
+    # 1. info.json - 只有几 KB
+    self.info = json.load(info_file)
+    # 内容: {"total_episodes": 60, "total_frames": 3738, "fps": 3, "features": {...}}
+
+    # 2. episodes_df - DataFrame，只有几十 KB
+    self.episodes_df = pd.read_parquet(episodes_file)
+    # 列: episode_index, length, dataset_from_index, dataset_to_index
+    # 不包含图片数据！
+
+    # 3. tasks_df - DataFrame，只有几 KB
+    self.tasks_df = pd.read_parquet(tasks_file)
+    # 列: task_json (JSON 字符串)
+
+    # 4. data_chunks - 只有路径列表
+    self.data_chunks = [Path('data/chunk-000'), ...]
+    # 不读取 parquet 文件内容！
+```
+
+#### _build_data_list 方法分析
+
+```python
+# 行 770-787: _build_data_list
+def _build_data_list(self):
+    data_list = []
+    for episode_idx in range(self.total_episodes):
+        episode_length = int(episode_data.iloc[0]['length'])
+
+        num_rounds = (episode_length - valid_idx) // self.num_frames
+        for n in range(num_rounds + 1):
+            start_frame = n * self.num_frames
+            # 只存储元组，不加载图片
+            data_list.append((episode_idx, start_frame, valid_idx))
+
+    return data_list
+    # 例如: [(0, 0, 0), (0, 6, 0), (1, 0, 0), ...]
+    # 每个元组只有 3 个整数，约 72 bytes
+    # 10000 个样本 ≈ 720 KB
+```
+
+### 10.3 运行时的内存加载
+
+#### __getitem__ 方法分析
+
+```python
+# 行 925-1033: __getitem__
+def __getitem__(self, idx):
+    episode_idx, start_idx, valid_idx = self.data_list[idx]
+
+    # 动态加载图片（每个样本只加载需要的图片）
+    images = []
+    actions = []
+
+    # 1. 加载历史帧
+    for step_id in history_step_ids:
+        global_frame_idx = episode_start + step_id
+
+        # 定位帧所在文件
+        chunk_idx, file_idx, file_start_idx = self._locate_frame(global_frame_idx, episode_idx)
+
+        # 从 parquet 加载一行数据（包含 PNG 字节）
+        frame_data = self._load_frame_data(chunk_idx, file_idx, global_frame_idx)
+        # frame_data = {
+        #     'index': 10,
+        #     'action': 3,
+        #     'observation.images.rgb': {'bytes': b'\x89PNG...'},  # ← PNG 字节
+        #     ...
+        # }
+
+        # 从 PNG 字节加载图片
+        img_bytes = frame_data['observation.images.rgb']['bytes']
+        frame = self._load_image_from_bytes(img_bytes)
+
+        # 处理图片
+        frame_tensor = self._process_frame(frame)
+        images.append(frame_tensor)
+
+    # 2. 加载样本帧（同上）
+    for step_id in sample_step_ids:
+        # ... 同样的加载流程 ...
+        actions.append(action_value)
+
+    # 3. 构建对话和预处理
+    sources = copy.deepcopy(self.conversations)
+    interleave_sources = self.prepare_conversation(sources, list(actions))
+    data_dict = preprocess([interleave_sources], self.tokenizer, True)
+
+    # 4. 返回（图片在内存中）
+    return data_dict["input_ids"][0], data_dict["labels"][0], images, time_ids, self.task
+```
+
+### 10.4 内存占用详细分析
+
+#### 初始化阶段
+
+| 数据 | 类型 | 大小 | 说明 |
+|------|------|------|------|
+| `self.info` | dict | ~5 KB | JSON 元数据 |
+| `self.episodes_df` | DataFrame | ~50 KB | episode 边界信息 |
+| `self.tasks_df` | DataFrame | ~10 KB | task 描述 |
+| `self.data_chunks` | list[Path] | ~1 KB | 路径列表 |
+| `self.data_list` | list[tuple] | ~1 MB | 索引元组（10k 样本） |
+| **总计** | - | **~2 MB** | 不含图片 |
+
+#### 单个样本加载
+
+| 数据 | 类型 | 大小 | 说明 |
+|------|------|------|------|
+| PNG 字节 | bytes | ~100 KB | 压缩的图片数据 |
+| 解码后 numpy array | ndarray | ~900 KB | 480x640x3 uint8 |
+| 处理后 tensor | torch.Tensor | ~600 KB | 3x224x224 float32 |
+| 单张图片 | - | ~600 KB | SigLip 处理后 |
+| 6 张图片 | - | ~3.6 MB | num_frames=6 |
+| **单个样本** | - | **~5 MB** | 包含图片、文本、标签 |
+
+#### DataLoader 运行时
+
+```python
+dataloader = DataLoader(dataset, batch_size=8, num_workers=4)
+
+# 内存占用计算:
+# 每个 worker: 5 MB × 1 样本 = 5 MB
+# 4 个 workers: 5 MB × 4 = 20 MB
+# Batch 收集: 5 MB × 8 = 40 MB
+# 总共约 60-100 MB（取决于 prefetch）
+```
+
+### 10.5 懒加载的优势
+
+| 特性 | 懒加载（LeRobotActionDataset） | 预加载（传统方式） |
+|------|------------------------------|------------------|
+| **初始化时间** | ~2-3 秒 | ~10-30 分钟 |
+| **初始化内存** | ~2 MB | 几十 GB |
+| **支持大规模** | ✅ 100k+ episodes | ❌ 受内存限制 |
+| **增量更新** | ✅ 无需重新加载 | ❌ 需要重启 |
+| **多进程友好** | ✅ 每个 worker 独立 | ⚠️ 需要共享内存 |
+
+### 10.6 内存加载流程图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  初始化阶段 (__init__)                                      │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ 1. _load_lerobot_metadata()                          │   │
+│  │    ├─ info.json          → ~5 KB                    │   │
+│  │    ├─ episodes.parquet   → ~50 KB                   │   │
+│  │    ├─ tasks.parquet      → ~10 KB                   │   │
+│  │    └─ data_chunks list   → ~1 KB                    │   │
+│  │                                                         │   │
+│  │ 2. _build_data_list()                                 │   │
+│  │    └─ [(ep_idx, start, valid), ...] → ~1 MB         │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  总内存: ~2 MB                                              │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  训练阶段 (DataLoader + __getitem__)                        │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Batch 0:                                             │   │
+│  │   Worker 1: __getitem__(0)  → 加载 6 张图 → ~5 MB   │   │
+│  │   Worker 2: __getitem__(1)  → 加载 6 张图 → ~5 MB   │   │
+│  │   Worker 3: __getitem__(2)  → 加载 6 张图 → ~5 MB   │   │
+│  │   Worker 4: __getitem__(3)  → 加载 6 张图 → ~5 MB   │   │
+│  │   Collate: 4 个样本 → Batch → ~40 MB                │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                          │                                  │
+│                          ▼                                  │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Batch 1: (释放 Batch 0 的内存)                        │   │
+│  │   Worker 1: __getitem__(4)  → 加载 6 张图 → ~5 MB   │   │
+│  │   Worker 2: __getitem__(5)  → 加载 6 张图 → ~5 MB   │   │
+│  │   ...                                                  │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  峰值内存: ~60-100 MB                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 10.7 与 VLNActionDataset 的内存对比
+
+| 阶段 | VLNActionDataset | LeRobotActionDataset |
+|------|-----------------|---------------------|
+| **初始化** | ~10 MB (annotations.json) | ~2 MB (元数据) |
+| **单个样本** | ~5-10 MB (6-12 张图片) | ~5 MB (6 张图片) |
+| **是否预加载图片** | ❌ 按需加载 | ❌ 按需加载 |
+| **支持大规模** | ✅ 但目录扫描慢 | ✅ Parquet 索引快 |
+
+**两者都采用懒加载策略，都不会在初始化时加载全部图片。**
+
+### 10.8 常见问题
+
+#### Q1: 如果数据集有 10000 个 episodes，初始化会慢吗？
+
+**A:** 不会。初始化只加载元数据，时间复杂度是 O(1)：
+- 加载 info.json: ~1ms
+- 加载 episodes.parquet: ~10ms (整个文件，不管多少 episodes)
+- 构建 data_list: ~5ms (只是循环和元组创建)
+- **总计: ~20ms**
+
+#### Q2: 如果数据集有 10000 个 episodes，初始化会占用多少内存？
+
+**A:** 约 2-3 MB：
+- episodes_df: ~50 KB (所有 episodes 的元信息)
+- data_list: ~1 MB (10000 个 3 元组)
+- 其他: ~1 MB
+- **总计: ~2 MB**
+
+#### Q3: 训练时会内存溢出吗？
+
+**A:** 不会。每次只加载一个 batch 的图片：
+- batch_size=8: 每张 ~600KB × 8 ≈ 5MB
+- num_workers=4: 5MB × 4 = 20MB
+- 总共: ~60-100 MB（含缓存）
+
+#### Q4: 可以增加 batch_size 吗？
+
+**A:** 可以。根据 GPU 内存调整：
+```python
+# 估计 GPU 内存占用
+per_sample = 5 MB  # 图片
+model_forward = 2 GB  # 模型前向传播
+gradient = 2 GB  # 梯度
+optimizer_state = 2 GB  # 优化器状态
+
+# 总计 = 2GB + 2GB + 2GB + (5MB × batch_size)
+# batch_size=32: ~6GB + 160MB ≈ 6.2 GB (适合 8GB GPU)
+# batch_size=64: ~6GB + 320MB ≈ 6.3 GB (适合 8GB GPU)
+```
+
+---
+
+## 11. 数据格式详解：为什么是 HWC？
+
+### 11.1 维度顺序的来源
+
+在 `r2r2lerobot.py` 中，图片的 features 定义如下：
+
+```python
+# 行 30-35
+R2R_FEATURES = {
+    "observation.images.rgb": {
+        "dtype": "image",
+        "shape": None,  # Will be inferred from first image: [height, width, channel]
+        "names": ["height", "width", "channel"]
+    },
+    ...
+}
+```
+
+**`names` 字段说明：**
+- 这是一个**描述性标签**，用于说明 `shape` 中每个维度代表什么
+- 它反映了 NumPy 数组的实际格式：`(height, width, channel)`
+- 这种格式被称为 **HWC** 格式
+
+### 11.2 为什么选择 HWC 而不是 CHW？
+
+#### NumPy 的默认行为
+
+```python
+# 行 103-104: r2r2lerobot.py
+from PIL import Image
+img = Image.open(img_path)
+img_array = np.array(img)  # ← 返回 (H, W, C) 格式
+```
+
+当你使用 `np.array(img)` 从 PIL Image 创建 NumPy 数组时，自动得到 `(H, W, C)` 格式：
+
+```python
+# 示例：480x640 的 RGB 图片
+img = Image.open("scene.jpg")
+arr = np.array(img)
+
+print(arr.shape)  # (480, 640, 3)
+#                  │     │    └─ channel (R, G, B)
+#                  │     └────── width (640 像素/行)
+#                  └──────────── height (480 行)
+```
+
+#### 图像格式对比
+
+| 格式 | 维度顺序 | 使用场景 | 示例 |
+|------|---------|----------|------|
+| **HWC** | (Height, Width, Channel) | NumPy, PIL, OpenCV | `(480, 640, 3)` |
+| **CHW** | (Channel, Height, Width) | PyTorch, Cx | `(3, 480, 640)` |
+| **BHWC** | (Batch, Height, Width, Channel) | TensorFlow 默认 | `(8, 480, 640, 3)` |
+| **BCHW** | (Batch, Channel, Height, Width) | PyTorch 默认 | `(8, 3, 480, 640)` |
+
+**LeRobot 选择 HWC 的原因：**
+
+| 考虑因素 | HWC ✅ | CHW ❌ |
+|---------|--------|--------|
+| **NumPy 原生支持** | ✅ 默认格式 | ❌ 需要转换 |
+| **PIL 兼容** | ✅ 直接输出 | ❌ 需要转换 |
+| **OpenCV 兼容** | ✅ 默认格式 | ❌ 需要转换 |
+| **数据可视化** | ✅ matplotlib 直接显示 | ❌ 需要转换 |
+| **人类直觉** | ✅ 高×宽，符合直觉 | ⚠️ 通道在前 |
+
+### 11.3 完整的数据流动
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  数据存储格式 (HWC)                                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  原始 JPG 文件                                              │
+│       │                                                     │
+│       ↓ PIL.Image.open()                                   │
+│  PIL Image 对象                                            │
+│       │                                                     │
+│       ↓ np.array()                                         │
+│  NumPy Array (480, 640, 3)  ← HWC 格式                     │
+│       │                                                     │
+│       ↓ 存入 Parquet                                        │
+│  Parquet 文件                                               │
+│  {                                                          │
+│    "observation.images.rgb": {                              │
+│      "dtype": "image",                                      │
+│      "shape": [480, 640, 3],                               │
+│      "names": ["height", "width", "channel"]               │
+│    }                                                        │
+│  }                                                          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ↓ 训练时加载
+┌─────────────────────────────────────────────────────────────┐
+│  数据处理格式转换                                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  从 Parquet 读取 PNG 字节                                    │
+│       │                                                     │
+│       ↓ Image.open(BytesIO())                               │
+│  PIL Image (HWC)                                            │
+│       │                                                     │
+│       ↓ np.array()                                         │
+│  NumPy Array (480, 640, 3)  ← HWC 格式                     │
+│       │                                                     │
+│       ↓ torch.from_numpy()                                 │
+│  torch.Tensor (480, 640, 3)  ← HWC 格式                    │
+│       │                                                     │
+│       ↓ .permute(2, 0, 1)                                  │
+│  torch.Tensor (3, 480, 640)  ← CHW 格式（PyTorch 需要）    │
+│       │                                                     │
+│       ↓ 送入模型                                           │
+│  模型输入 (Batch, 3, 224, 224)  ← CHW 格式                  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 11.4 代码中的格式转换
+
+#### 在数据转换时（r2r2lerobot.py）
+
+```python
+# 行 99-122
+for frame_idx, img_path in enumerate(image_files):
+    # 1. 从文件读取（HWC）
+    from PIL import Image
+    img = Image.open(img_path)
+
+    # 2. 转换为 NumPy（HWC）
+    img_array = np.array(img)  # (480, 640, 3)
+
+    # 3. 直接存储（HWC）
+    yield {
+        "observation.images.rgb": img_array,  # HWC 格式
+        "action": action,
+        "task": task,
+    }
+```
+
+#### 在数据加载时（lerobot_action_dataset.py）
+
+```python
+# 行 960-967
+# 1. 从 Parquet 读取 PNG 字节
+img_data = frame_data.get('observation.images.rgb', {})
+image_bytes = img_data['bytes']
+
+# 2. 解码为 NumPy（HWC）
+frame = self._load_image_from_bytes(image_bytes)  # (480, 640, 3)
+
+# 行 1036-1057
+# 3. 转换为 Tensor（HWC）
+frame_tensor = torch.from_numpy(frame).float() / 255.0  # (480, 640, 3)
+
+# 4. HWC → CHW（关键转换）
+if frame_tensor.dim() == 3 and frame_tensor.shape[-1] <= 4:
+    frame_tensor = frame_tensor.permute(2, 0, 1)  # (3, 480, 640)
+
+# 5. CHW → HWC（转回 PIL）
+frame_pil = Image.fromarray(
+    (frame_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+)  # (480, 640, 3)
+
+# 6. SigLip 处理（会再转回 CHW）
+frame_processed = self.image_processor.preprocess(
+    images=frame_pil,
+    return_tensors='pt'
+)['pixel_values'][0]  # (3, 224, 224)
+```
+
+### 11.5 维度转换详解
+
+#### permute(2, 0, 1) 的作用
+
+```python
+# 原始张量 (HWC)
+tensor = torch.tensor([[[R, G, B], [R, G, B]], [[R, G, B], [R, G, B]]])
+shape = (2, 2, 3)  # 2 行 × 2 列 × 3 通道
+
+# permute(2, 0, 1) 表示：
+# - 新维度 0 ← 旧维度 2 (channel)
+# - 新维度 1 ← 旧维度 0 (height)
+# - 新维度 2 ← 旧维度 1 (width)
+permuted = tensor.permute(2, 0, 1)
+shape = (3, 2, 2)  # 3 通道 × 2 行 × 2 列
+
+# 索引变化：
+# 原始: tensor[y, x, c]  (H, W, C)
+# 转换: tensor[c, y, x]  (C, H, W)
+```
+
+**图示：**
+
+```
+原始 HWC 格式:                 转换后 CHW 格式:
+   Height  Width                  Channel  Height  Width
+    ↓       ↓                        ↓       ↓       ↓
+  ┌─────┬─────┬─────┐           ┌─────┬─────┬─────┐
+  │ RGB │ RGB │ RGB │           │ RGB │ RGB │ RGB │  ← Channel 0 (R)
+  ├─────┼─────┼─────┤           ├─────┼─────┼─────┤
+  │ RGB │ RGB │ RGB │           │ RGB │ RGB │ RGB │  ← Channel 1 (G)
+  └─────┴─────┴─────┘           ├─────┼─────┼─────┤
+     (2, 2, 3)                  │ RGB │ RGB │ RGB │  ← Channel 2 (B)
+                                └─────┴─────┴─────┘
+                                   (3, 2, 2)
+```
+
+### 11.6 PyTorch 为什么需要 CHW？
+
+#### 卷积操作的效率
+
+```python
+# CHW 格式对卷积更高效
+# 原因：每个通道的数据是连续的，便于并行计算
+
+# CHW 格式： (3, 480, 640)
+# 内存布局：
+# [
+#   [R_0000, R_0001, ..., R_0239],  ← 所有 R 像素连续
+#   [G_0000, G_0001, ..., G_0239],  ← 所有 G 像素连续
+#   [B_0000, B_0001, ..., B_0239],  ← 所有 B 像素连续
+# ]
+
+# HWC 格式： (480, 640, 3)
+# 内存布局：
+# [
+#   [R_0000, G_0000, B_0000, R_0001, G_0001, B_0001, ...],
+#   ↑ 每个像素的 RGB 交替存储，不利于并行卷积
+# ]
+```
+
+#### CUDA/GPU 优化
+
+```python
+# GPU 卷积核通常针对 CHW 优化
+# 早期深度学习框架（如 Caffe）使用 CHW
+# PyTorch 延续了这个设计
+
+# 现代 GPU（如 Tensor Core）对 CHW 有专门的优化
+# 可以同时处理多个通道
+```
+
+### 11.7 实际使用示例
+
+#### 正确的维度处理
+
+```python
+# ❌ 错误：直接使用 HWC
+frame = np.array(Image.open("image.jpg"))  # (480, 640, 3)
+tensor = torch.from_numpy(frame)           # (480, 640, 3)
+model(tensor)  # 报错！模型期望 (B, 3, 480, 640)
+
+# ✅ 正确：转换为 CHW
+frame = np.array(Image.open("image.jpg"))  # (480, 640, 3) HWC
+tensor = torch.from_numpy(frame)           # (480, 640, 3) HWC
+tensor = tensor.permute(2, 0, 1)            # (3, 480, 640) CHW
+tensor = tensor.unsqueeze(0)                # (1, 3, 480, 640) 加 batch 维
+model(tensor)  # 正确！
+```
+
+#### 在 DataLoader 中
+
+```python
+# collate_fn 中的处理
+def collate_fn(batch):
+    images = []
+    for item in batch:
+        # item["images"] 已经是 (T, C, H, W) 格式
+        images.append(item["images"])
+
+    # Stack: (B, T, C, H, W)
+    images = torch.stack(images)
+    return images
+```
+
+### 11.8 总结
+
+| 方面 | 说明 |
+|------|------|
+| **存储格式** | HWC (Height, Width, Channel) |
+| **原因** | NumPy/PIL/OpenCV 标准格式 |
+| **模型输入** | CHW (Channel, Height, Width) |
+| **原因** | PyTorch/GPU 优化 |
+| **转换时机** | 训练时的 `_process_frame()` 方法 |
+| **转换方法** | `tensor.permute(2, 0, 1)` |
+
+**关键点：**
+- LeRobot 使用 HWC 存储，为了与标准图像库兼容
+- PyTorch 使用 CHW 输入，为了 GPU 性能优化
+- 两者之间的转换是透明的，在 `_process_frame()` 中自动完成
+
+---
+
+## 12. 总结
 
 1. **懒加载**: 初始化快，内存占用小
 2. **滑动窗口**: 将长 episode 切分为多个训练样本
