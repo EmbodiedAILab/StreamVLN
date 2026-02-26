@@ -155,7 +155,7 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 4 \
-    --gradient_accumulation_steps 2 \
+    --gradient_accumulation_steps 4 \
     --eval_strategy "no" \
     --save_strategy "epoch" \
     --save_total_limit 1 \
