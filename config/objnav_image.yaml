@@ -1,0 +1,49 @@
+# @package _global_
+
+defaults:
+  - /habitat: habitat_config_base
+  - /habitat/task: objectnav
+  - /habitat/simulator/agents@habitat.simulator.agents.main_agent: rgbd_agent
+  - /habitat/dataset/objectnav: hm3d
+  - _self_
+
+habitat:
+  environment:
+    max_episode_steps: 500
+    iterator_options:
+      max_scene_repeat_steps: 50000
+      shuffle: False
+  simulator:
+    turn_angle: 30
+    tilt_angle: 30
+    forward_step_size: 0.25
+    action_space_config: "v0"
+    agents:
+      main_agent:
+        sim_sensors:
+          rgb_sensor:
+            width: 640
+            height: 480
+            hfov: 79
+            position: [0, 0.88, 0]
+        height: 0.88
+        radius: 0.18
+    habitat_sim_v0:
+      gpu_device_id: 0
+      allow_sliding: False
+  task:
+    lab_sensors:
+      gaussian_splatting_rgb_sensor:
+        type: "GaussianSplattingRGBSensor"
+        reconstruction_scene_assets_dir: "reconstruction"
+    measurements:
+      distance_to_goal:
+        distance_to: VIEW_POINTS
+      success:
+        success_distance: 1.0
+        
+  dataset:
+    type: ObjectNav-v1
+    split: val_seen
+    scenes_dir: data/scene_datasets/
+    data_path: data/trajectory_data_hm3d_format/objectnav/cloudrobo_v1_l3mvn/train/content/suzhou-room-shengwei-metacam-2025-07-09_01-13-22.json.gz

@@ -216,6 +216,20 @@
         }
     },
     {
+        "name": "Python: Object Navigation transfer image",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/scripts/objnav_converters/objnav2streamvln.py",
+        "args": [
+        ],
+        "console": "integratedTerminal",
+        "justMyCode": false,
+        "env": {
+            "PYTHONPATH": "${workspaceFolder}",
+            "CUDA_VISIBLE_DEVICES": "4,5,6,7"
+        }
+    },
+    {
         "name": "torchrun: Train StreamVLN finetune All With Lora (8 GPUs) v100 32g",
         "type": "python",
         "request": "launch",

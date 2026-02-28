@@ -20,7 +20,9 @@
       "Bash(python:*)",
       "Bash(chmod:*)",
       "Bash(source:*)",
-      "Bash(conda activate:*)"
+      "Bash(conda activate:*)",
+      "Bash(file:*)",
+      "Bash(git submodule:*)"
     ],
     "deny": [],
     "ask": []
