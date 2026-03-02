@@ -36,7 +36,7 @@ habitat:
   task:
     lab_sensors:
       gaussian_splatting_rgb_sensor:
-        reconstruction_scene_assets_dir: "reconstruction"
+        reconstruction_scene_assets_dir: "data/scene_datasets/reconstruction"
     measurements:
       distance_to_goal:
         distance_to: VIEW_POINTS

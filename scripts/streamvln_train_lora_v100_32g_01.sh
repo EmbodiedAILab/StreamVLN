@@ -124,7 +124,7 @@ fi
 echo "========================"
 
 #torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
-torchrun --nnodes=$NNODES --nproc_per_node=6 \
+torchrun --nnodes=$NNODES --nproc_per_node=8 \
     --rdzv_id=12345 --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT streamvln/streamvln_train.py \
     --deepspeed scripts/zero2_v100_32g.json \
     --model_name_or_path $PREV_STAGE_CHECKPOINT \
@@ -156,7 +156,7 @@ torchrun --nnodes=$NNODES --nproc_per_node=6 \
     --num_train_epochs 3 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 4 \
-    --gradient_accumulation_steps 4 \
+    --gradient_accumulation_steps 2 \
     --eval_strategy "no" \
     --save_strategy "epoch" \
     --save_total_limit 3 \
