@@ -1,7 +1,6 @@
 import os
 import json
 import habitat
-from tqdm import tqdm
 
 from habitat_baselines.config.default import get_config
 from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
@@ -22,7 +21,7 @@ register_hydra_plugin(HabitatConfigPlugin)
 env = habitat.Env(config=get_config(CONFIG_PATH))
 annotations = json.load(open(ANNOT_PATH, "r"))
 
-for episode in tqdm(env.episodes, desc="Processing episodes"):
+for episode in env.episodes:
     env.current_episode = episode
     agent = ShortestPathFollower(sim=env.sim, goal_radius=GOAL_RADIUS, return_one_hot=False)
     observation = env.reset()
@@ -30,10 +29,6 @@ for episode in tqdm(env.episodes, desc="Processing episodes"):
     annotation = next(annot for annot in annotations if annot["id"] == int(episode.episode_id))  # Get annotation for current episode
     reference_actions = annotation["actions"][1:] + [0]  # Pop the dummy action at the beginning and add stop action at the end
     step_id = 0  # Initialize step ID
-
-    # Display current episode info
-    episode_info = f"Episode {episode.episode_id} ({annotation['video']})"
-    tqdm.write(f"Processing {episode_info} with {len(reference_actions)} steps")
 
     while not env.episode_over:
         # rgb = observation["rgb"]  # Get the current rgb observation
@@ -45,9 +40,7 @@ for episode in tqdm(env.episodes, desc="Processing episodes"):
         video_id = annotation["video"]  # Get the video ID from the annotation
         rgb_dir = f"data/trajectory_data/objectnav/cloudrobo_v1_l3mvn/{video_id}/rgb"
         os.makedirs(rgb_dir, exist_ok=True)
-        frame_path = os.path.join(rgb_dir, f"{step_id:03d}.jpg")
-        Image.fromarray(rgb).convert("RGB").save(frame_path)
-        # tqdm.write(f"[{episode_info}] Saved frame {step_id}: {frame_path}")
+        Image.fromarray(rgb).convert("RGB").save(os.path.join(rgb_dir, f"{step_id:03d}.jpg"))
         # --------------------------------------------------------
 
         action = reference_actions.pop(0)  # Get next action from our annotation
