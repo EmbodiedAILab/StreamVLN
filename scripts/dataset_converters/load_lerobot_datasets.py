@@ -293,7 +293,8 @@ def get_all_episodes_data(dataset: LeRobotDataset) -> list[dict]:
 
 
 def main():
-    dataset = LeRobotDataset(repo_id='streamvln/r2r_navigation', root='./data/lerobot')
+    #dataset = LeRobotDataset(repo_id='streamvln/r2r_navigation', root='./data/lerobot')
+    dataset = LeRobotDataset(repo_id='streamvln/r2r_navigation', root='./data/lerobot3.0/lerobot-shengwei-reconstruction')
 
     # 方式1: 获取单个 episode 的数据
     # data = get_episode_data(dataset, episode_index=0)

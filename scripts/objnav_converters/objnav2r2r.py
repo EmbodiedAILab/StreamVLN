@@ -55,11 +55,17 @@ def convert_reference_replay(reference_replay: list) -> list:
 
     - First step (index 0): Always convert to -1 (dummy action)
     - Skip LOOK_UP and LOOK_DOWN actions entirely
+    - Skip last action if it's STOP
     - Map other actions to their integer IDs
     """
     actions = []
+    last_idx = len(reference_replay) - 1
     for i, step in enumerate(reference_replay):
         action_str = step["action"]
+
+        # Skip last action if it's STOP
+        if i == last_idx and action_str == "STOP":
+            continue
 
         # First step -> dummy -1
         if i == 0:

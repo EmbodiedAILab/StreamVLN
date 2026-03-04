@@ -123,7 +123,7 @@ if [ "$GPU_COUNT" -lt "$NPROC_PER_NODE" ]; then
 fi
 echo "========================"
 
-torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
+torchrun --nnodes=$NNODES --nproc_per_node=6 \
     --rdzv_id=12345 --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT streamvln/streamvln_train.py \
     --deepspeed scripts/zero2_v100_32g.json \
     --model_name_or_path $PREV_STAGE_CHECKPOINT \
@@ -146,22 +146,22 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE \
     --image_grid_pinpoints  "(1x1),...,(6x6)" \
     --fp16 True \
     --lora_enable True \
-    --lora_r 2 \
-    --lora_alpha 8 \
+    --lora_r 32 \
+    --lora_alpha 64 \
     --lora_dropout 0.05 \
     --lora_bias "none" \
     --run_name $MID_RUN_NAME \
     --output_dir checkpoints/$MID_RUN_NAME \
-    --num_train_epochs 1 \
+    --num_train_epochs 3 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 4 \
     --eval_strategy "no" \
     --save_strategy "epoch" \
-    --save_total_limit 1 \
-    --learning_rate 1e-5 \
+    --save_total_limit 3 \
+    --learning_rate 1e-4 \
     --mm_projector_lr 1e-5 \
-    --mm_vision_tower_lr 5e-6 \
+    --mm_vision_tower_lr 1e-6 \
     --weight_decay 0. \
     --warmup_ratio 0.075 \
     --lr_scheduler_type "cosine_with_min_lr" \
