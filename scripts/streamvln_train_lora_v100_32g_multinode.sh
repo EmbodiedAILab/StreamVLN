@@ -151,7 +151,8 @@ echo "========================================"
 echo ""
 
 torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE --node_rank=$NODE_RANK \
-    --rdzv_id=12345 --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT streamvln/streamvln_train.py \
+    --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
+    streamvln/streamvln_train.py \
     --deepspeed scripts/zero2_v100_32g.json \
     --model_name_or_path $PREV_STAGE_CHECKPOINT \
     --version $PROMPT_VERSION \

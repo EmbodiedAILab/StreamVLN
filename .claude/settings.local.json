@@ -22,7 +22,12 @@
       "Bash(source:*)",
       "Bash(conda activate:*)",
       "Bash(file:*)",
-      "Bash(git submodule:*)"
+      "Bash(git submodule:*)",
+      "Bash(bash:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(iptables:*)",
+      "Bash(ping:*)"
     ],
     "deny": [],
     "ask": []
