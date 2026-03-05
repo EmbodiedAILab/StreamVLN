@@ -4,6 +4,7 @@ export HF_HOME=$PWD/checkpoints/hf_home/
 # Distributed training parameters
 NNODES=${NNODES:-2}                           # Number of nodes, default 2 (multi-node)
 NPROC_PER_NODE=${NPROC_PER_NODE:-8}          # GPUs per node, default 8
+NODE_RANK=${NODE_RANK:-0}                    # Node rank (0=master, 1=worker1, 2=worker2, ...)
 MASTER_ADDR=${MASTER_ADDR:-192.168.0.14}     # Master node address, default 192.168.0.14
 MASTER_PORT=${MASTER_PORT:-12000}            # Default port
 
@@ -55,6 +56,7 @@ PY
 fi
 
 echo "=== Distributed training config ==="
+echo "Node Rank: $NODE_RANK (0=master, 1+=worker)"
 echo "Num nodes: $NNODES"
 echo "NPROC_PER_NODE: $NPROC_PER_NODE"
 echo "Master endpoint: $MASTER_ADDR:$MASTER_PORT"
@@ -124,7 +126,7 @@ if [ "$GPU_COUNT" -lt "$NPROC_PER_NODE" ]; then
 fi
 echo "========================"
 
-torchrun --nnodes=$NNODES --nproc_per_node=6 \
+torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE --node_rank=$NODE_RANK \
     --rdzv_id=12345 --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT streamvln/streamvln_train.py \
     --deepspeed scripts/zero2_v100_32g.json \
     --model_name_or_path $PREV_STAGE_CHECKPOINT \
