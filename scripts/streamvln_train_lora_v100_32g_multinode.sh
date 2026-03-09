@@ -186,7 +186,7 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC_PER_NODE --node_rank=$NODE_RAN
     --gradient_accumulation_steps 4 \
     --eval_strategy "no" \
     --save_strategy "epoch" \
-    --save_total_limit 1 \
+    --save_total_limit 3 \
     --learning_rate 1e-4 \
     --mm_projector_lr 1e-5 \
     --mm_vision_tower_lr 1e-6 \

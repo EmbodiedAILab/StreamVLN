@@ -27,7 +27,10 @@
       "Bash(netstat:*)",
       "Bash(ss:*)",
       "Bash(iptables:*)",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(PYTHONPATH=. /root/miniconda3/envs/streamvln-0226/bin/python:*)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []

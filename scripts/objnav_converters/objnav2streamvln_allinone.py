@@ -38,26 +38,20 @@ config = get_config(CONFIG_PATH, args.opts)
 env = habitat.Env(config=config)
 annotations = json.load(open(ANNOT_PATH, "r"))
 
-# Build episode lookup dictionary for fast access
-episode_dict = {ep.episode_id: ep for ep in env.episodes}
-
-for annotation in tqdm(annotations, desc="Processing annotations"):
-    # annotation["id"] is int, but episode_dict keys are str, need to convert
-    episode_id = str(annotation["id"])
-    episode = episode_dict.get(episode_id)
-
-    if episode is None:
-        tqdm.write(f"Warning: Episode {episode_id} not found in env.episodes, skipping")
-        continue
-
+for episode in tqdm(env.episodes, desc="Processing episodes"):
     env.current_episode = episode
     agent = ShortestPathFollower(sim=env.sim, goal_radius=GOAL_RADIUS, return_one_hot=False)
     observation = env.reset()
+
+    annotation = next((annot for annot in annotations if annot["id"] == int(episode.episode_id)), None)  # Get annotation for current episode
+    if annotation is None:
+        # Skip episodes not in this annotation file (since annotations are split)
+        continue
     reference_actions = annotation["actions"][1:] + [0]  # Pop the dummy action at the beginning and add stop action at the end
     step_id = 0  # Initialize step ID
 
     # Display current episode info
-    episode_info = f"Episode {episode_id} ({annotation['video']})"
+    episode_info = f"Episode {episode.episode_id} ({annotation['video']})"
 
     # Check if rgb directory already exists and has correct number of images
     video_id = annotation["video"]

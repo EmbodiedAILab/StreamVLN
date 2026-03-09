@@ -27,18 +27,12 @@ from tqdm import tqdm
 # R2R Dataset Features Definition
 # Note: "task" is a special required field that is added to each frame,
 # but is NOT defined in features as it's handled separately by LeRobot
-# {"dtype": "video", "shape": (3, 480, 640), "names": ["channel", "height", "width"]
 R2R_FEATURES = {
     "observation.images.rgb": {
         #"dtype": "video",
-        # "dtype": "image",
-        # "shape": None,  # Will be inferred from first image: [height, width, channel]
-        # "names": ["height", "width", "channel"]
-        "dtype": "video",
-        # "shape": (3,480, 640),  # Will be inferred from first image: [height, width, channel]
+        "dtype": "image",
         "shape": None,  # Will be inferred from first image: [height, width, channel]
-        "names": ["channel","height", "width"]
-    
+        "names": ["height", "width", "channel"]
     },
     "action": {
         "dtype": "int64",
@@ -285,17 +279,12 @@ def process_dataset(
             img_array = np.array(first_img)
             height, width = img_array.shape[:2]
             # Shape format: [height, width, channel]
-            # R2R_FEATURES["observation.images.rgb"]["shape"] = [height, width, 3]
-            # logger.info(f"Inferred image shape: [{height}, {width}, 3]")
-            # for video
-            R2R_FEATURES["observation.images.rgb"]["shape"] = [3, height, width]
-            logger.info(f"Inferred video shape: [3, {height}, {width}]")
-
-
+            R2R_FEATURES["observation.images.rgb"]["shape"] = [height, width, 3]
+            logger.info(f"Inferred image shape: [{height}, {width}, 3]")
 
         dataset = LeRobotDataset.create(
             repo_id=repo_id,
-            root=output_path,
+            root=output_dir,
             fps=fps,
             features=R2R_FEATURES,
         )
