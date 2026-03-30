@@ -56,6 +56,7 @@ def load_checkpoint(checkpoint_file: Path) -> set:
 def save_checkpoint(checkpoint_file: Path, processed_ann_ids: set) -> None:
     """
     Save checkpoint to file with file locking for multi-process safety.
+    Uses copy + remove instead of rename for mounted filesystem compatibility.
 
     Args:
         checkpoint_file: Path to checkpoint JSON file
@@ -78,8 +79,9 @@ def save_checkpoint(checkpoint_file: Path, processed_ann_ids: set) -> None:
                 # Release lock
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
-        # Atomic rename
-        temp_file.replace(checkpoint_file)
+        # Use copy + remove instead of rename for mounted filesystem compatibility
+        shutil.copy2(temp_file, checkpoint_file)
+        os.remove(temp_file)
 
     except Exception as e:
         logger.error(f"Failed to save checkpoint: {e}")
