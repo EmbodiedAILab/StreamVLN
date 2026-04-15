@@ -96,6 +96,16 @@ class DataArguments:
     image_size: Optional[int] = field(default=384)
     remove_init_turns: Optional[bool] = field(default=False)
 
+    # ObjectNav LeRobot specific
+    objnav_lerobot_root: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to ObjectNav LeRobot dataset root (parent of episode directories)"}
+    )
+    use_objnav_lerobot: bool = field(
+        default=False,
+        metadata={"help": "Whether to use ObjectNav LeRobot dataset"}
+    )
+
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)

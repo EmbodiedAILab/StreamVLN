@@ -1442,8 +1442,29 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,visi
 
     dataset = []
 
+    # Support for ObjectNav LeRobot dataset (highest priority)
+    if getattr(data_args, 'use_objnav_lerobot', False) and data_args.objnav_lerobot_root is not None:
+        from streamvln.dataset.objectnav_lerobot_video_dataset import ObjectNavLerobotVideoDataset
+
+        # Set video_folder to objnav_lerobot_root for the dataset
+        original_video_folder = data_args.video_folder
+        data_args.video_folder = data_args.objnav_lerobot_root
+
+        nav_dataset = ObjectNavLerobotVideoDataset(
+            tokenizer=tokenizer,
+            data_args=data_args,
+            task_id="objectnav_lerobot",
+        )
+        dataset.append(nav_dataset)
+
+        # Restore original video_folder
+        data_args.video_folder = original_video_folder
+
+        rank0_print(f"Loaded ObjectNav LeRobot dataset for training")
+        rank0_print(f"  Data root: {data_args.objnav_lerobot_root}")
+
     # Support for LeRobot dataset (optional, takes priority if enabled)
-    if lerobot_args is not None and getattr(lerobot_args, 'use_lerobot', False):
+    elif lerobot_args is not None and getattr(lerobot_args, 'use_lerobot', False):
         from streamvln.dataset.lerobot_action_dataset import LeRobotActionDataset
 
         # Set LeRobot-specific data path
