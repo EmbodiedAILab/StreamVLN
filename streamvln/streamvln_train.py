@@ -58,8 +58,8 @@ from streamvln.dataset.mmc4_dataset import LazyMMC4Dataset
 
 from streamvln.dataset.objectnav_action_dataset import ObjNavActionDataset
 
-
 from streamvln.utils.utils import ANSWER_LIST, DEFAULT_IMAGE_TOKEN, IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_MEMORY_TOKEN, MEMORY_TOKEN_INDEX, DEFAULT_VIDEO_TOKEN
+
 torch.multiprocessing.set_sharing_strategy("file_system")
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -67,7 +67,7 @@ local_rank = None
 
 IS_TOKENIZER_GREATER_THAN_0_14 = version.parse(tokenizers.__version__) >= version.parse("0.14")
 
-from streamvln.args import ModelArguments, DataArguments, TrainingArguments
+from streamvln.args import ModelArguments, DataArguments, TrainingArguments, LeRobotDataArguments
 
 try:
     from petrel_client.client import Client
@@ -1437,13 +1437,56 @@ class DataCollatorForSupervisedDataset(object):
         
 
 
-def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,vision_tower, data_args) -> Dict:
+def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,vision_tower, data_args, lerobot_args=None) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
-    
+
     dataset = []
 
+    # Support for ObjectNav LeRobot dataset (highest priority)
+    if getattr(data_args, 'use_objnav_lerobot', False) and data_args.objnav_lerobot_root is not None:
+        from streamvln.dataset.objectnav_lerobot_video_dataset import ObjectNavLerobotVideoDataset
+
+        # Set video_folder to objnav_lerobot_root for the dataset
+        original_video_folder = data_args.video_folder
+        data_args.video_folder = data_args.objnav_lerobot_root
+
+        nav_dataset = ObjectNavLerobotVideoDataset(
+            tokenizer=tokenizer,
+            data_args=data_args,
+            task_id="objectnav_lerobot",
+        )
+        dataset.append(nav_dataset)
+
+        # Restore original video_folder
+        data_args.video_folder = original_video_folder
+
+        rank0_print(f"Loaded ObjectNav LeRobot dataset for training")
+        rank0_print(f"  Data root: {data_args.objnav_lerobot_root}")
+
+    # Support for LeRobot dataset (optional, takes priority if enabled)
+    elif lerobot_args is not None and getattr(lerobot_args, 'use_lerobot', False):
+        from streamvln.dataset.lerobot_action_dataset import LeRobotActionDataset
+
+        # Set LeRobot-specific data path
+        data_args.lerobot_dataset_path = lerobot_args.lerobot_data_path
+        if hasattr(lerobot_args, 'lerobot_repo_id'):
+            data_args.lerobot_repo_id = lerobot_args.lerobot_repo_id
+        if hasattr(lerobot_args, 'video_backend'):
+            data_args.video_backend = lerobot_args.video_backend
+
+        # Create dataset with unified interface (same as VLNActionDataset)
+        nav_dataset = LeRobotActionDataset(
+            tokenizer=tokenizer,
+            data_args=data_args,
+            task_id=0,
+        )
+        dataset.append(nav_dataset)
+
+        rank0_print(f"Loaded LeRobot dataset for training")
+        rank0_print(f"  Data path: {lerobot_args.lerobot_data_path}")
+        rank0_print(f"  Repo ID: {lerobot_args.lerobot_repo_id}")
     # Support for VLN dataset (optional)
-    if data_args.video_folder is not None:
+    elif data_args.video_folder is not None:
         nav_dataset = VLNActionDataset(tokenizer=tokenizer, data_args=data_args, task_id=0)
         dataset.append(nav_dataset)
         rank0_print(f"Loaded VLN dataset from {data_args.video_folder}")
@@ -1459,24 +1502,24 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,visi
         rank0_print(f"Loaded ObjectNav dataset from {data_args.objnav_video_folder}")
     else:
         rank0_print("ObjectNav dataset not loaded (objnav_video_folder is None)")
-    
+
     if data_args.multi_task_training:
         QA_data_agrs = copy.deepcopy(data_args)
         QA_data_agrs.video_folder = data_args.qa_video_folder
         QA_dataset = LazySupervisedDataset(tokenizer=tokenizer, data_path=QA_data_agrs.data_path, datasets="QA_datasets", data_args=QA_data_agrs, task_id=1)
-        
+
         SCANQA_data_agrs = copy.deepcopy(data_args)
         SCANQA_data_agrs.video_folder = data_args.scanqa_video_folder
         SCANQA_dataset = LazySupervisedDataset(tokenizer=tokenizer, data_path=SCANQA_data_agrs.data_path, datasets="SCANQA_datasets", data_args=SCANQA_data_agrs, task_id=2)
-        
+
         MMC4_dataset = LazyMMC4Dataset(tokenizer=tokenizer, data_path=data_args.data_path, datasets="MMC4_datasets", data_args=data_args, task_id=3)
-        
+
         dataset = dataset + [QA_dataset] + [SCANQA_dataset] + [MMC4_dataset]
     if len(dataset) > 1:
         train_dataset = CombineDataset(dataset)
     else:
         train_dataset = dataset[0]
-        
+
     rank0_print('len train_dataset ', len(train_dataset))
 
     data_collator = partial(collate_fn, tokenizer=tokenizer)
@@ -1570,8 +1613,8 @@ def train(attn_implementation=None):
     global local_rank
     # torch.autograd.set_detect_anomaly(True)
     
-    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, LeRobotDataArguments))
+    model_args, data_args, training_args, lerobot_args = parser.parse_args_into_dataclasses()
 
     if training_args.verbose_logging:
         rank0_print(f"Inspecting experiment hyperparameters:\n")
@@ -1834,7 +1877,7 @@ def train(attn_implementation=None):
         data_args.transform_train = None
 
     # import ipdb; ipdb.set_trace()
-    data_module = make_supervised_data_module(tokenizer=tokenizer,vision_tower=vision_tower, data_args=data_args)
+    data_module = make_supervised_data_module(tokenizer=tokenizer, vision_tower=vision_tower, data_args=data_args, lerobot_args=lerobot_args)
     
     params_no_grad = [
         n for n, p in model.named_parameters() if not p.requires_grad
